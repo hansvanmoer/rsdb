@@ -24,7 +24,7 @@ use log::debug;
 /// A parser to construct a regex
 ///
 #[derive(Debug)]
-pub struct Parser<'a> {
+struct Parser<'a> {
     ///
     /// The input stream
     ///
@@ -755,6 +755,14 @@ impl Automaton {
     }
 
     ///
+    /// Creates an automaton by parsing the supplied string
+    ///
+    fn from_str(input: &str) -> Result<Automaton, Error> {
+	let mut parser = Parser::new(input);
+	parser.parse()
+    }
+
+    ///
     /// Adds all regexes
     ///
     fn add_all(&mut self, regexes: &Vec<Regex>, states: &Vec<UnresolvedState>) {
@@ -830,9 +838,167 @@ impl Automaton {
     }
 }
 
-struct Matcher<'a> {
+///
+/// A matcher uses an automaton to find a match in text
+///
+pub struct Matcher<'a> {
+    ///
+    /// The automaton
+    ///
     autom: &'a Automaton,
-    stack: Vec<usize>,
+
+    ///
+    /// The stack, as this is an NFA
+    ///
+    stack: Vec<MatcherState>,
+
+    ///
+    /// The result
+    ///
+    result: usize,
+
+    ///
+    /// The length of the result
+    ///
+    len: usize,
+}
+
+impl<'a> Matcher<'a> {
+    ///
+    /// Creates a new matcher
+    ///
+    pub fn new(autom: &'a Automaton) -> Matcher<'a> {
+	Matcher {
+	    autom,
+	    stack: Vec::new(),
+	    len: 0,
+	    result: 0,
+	}
+    }
+
+    ///
+    /// Returns the length of the match, 0 for no match
+    ///
+    pub fn len(&self) -> usize {
+	self.len
+    }
+
+    ///
+    /// Returns the ID of the match
+    ///
+    pub fn result_id(&self) -> usize {
+	self.result
+    }
+
+    ///
+    /// Returns the name of the match
+    ///
+    pub fn result_name(&self) -> &'a str {
+	&self.autom.names[self.result]
+    }
+    
+    ///
+    /// Match a character buffer
+    ///
+    pub fn match_vec(&mut self, input: &Vec<char>, start_pos: usize, max: usize) -> bool {
+	self.len = 0;
+	if start_pos < input.len() {
+	    if let Some(start_id) = self.autom.start {
+		self.stack.clear();
+		
+		let mut id = start_id;
+		let mut count = 0;
+		let mut pos = start_pos;
+		loop {
+		    let state = &self.autom.states[id];
+		    let next = if state.min != state.max {
+			// it's a range
+			if pos == input.len() {
+			    // all characters consumed
+			    if state.then != state.otherwise {
+				// follow epsilon transition
+				Some(state.otherwise)
+			    } else {
+				// no epsilon transition -> invalid path
+				None
+			    }
+			} else {
+			    let c = input[pos] as u32;
+			    if c >= state.min && c < state.max {
+				// match
+				pos += 1;
+				Some(state.then)
+			    } else if state.then != state.otherwise {
+				// no match so follow epsilon transition
+				Some(state.otherwise)
+			    } else {
+				// no match and no epsilon transition -> invalid path
+				None
+			    }
+			}
+		    } else {
+			// it's an epsilon transition, an end state or a branch
+			if state.then != state.otherwise {
+			    // branch
+			    // add to stack pick the first one
+			    self.stack.push(MatcherState {
+				id,
+				pos
+			    });
+			    Some(state.then)
+			} else if state.result != -1{
+			    // end state
+			    // set result if this one is longer and unwind
+			    if pos > self.len {
+				self.len = pos;
+				self.result = state.result as usize;
+			    }
+			    None
+			} else {
+			    // epsilon transition
+			    Some(state.then)
+			}
+		    };
+
+		    match next {
+			Some(next) => {
+			    id = next;
+			},
+			None => {
+			    // no valid path, unwind stack to the last branch
+			    // and pick the second one
+			    match self.stack.pop() {
+				Some(state) => {
+				    id = self.autom.states[state.id].otherwise;
+				    pos = state.pos;
+				},
+				None => {
+				    // invalid path and no stack left
+				    break;
+				}
+			    }
+			}
+		    }
+		    
+		    if count == max {
+			// too long
+			break;
+		    } else {
+			count += 1;
+		    }
+		}
+	    }
+	}
+	self.len != 0
+    }
+}
+
+////
+/// State kept by a matcher on the stack
+///
+struct MatcherState {
+    id: usize,
+    pos: usize,
 }
 
 ///
@@ -1384,5 +1550,31 @@ mod tests {
 	assert_eq!((1, 28), parser.get_pos());
 	
 	assert_eq!(Err(Error::InvalidEscape), result);
+    }
+
+    #[test]
+    pub fn test_matcher() {
+	let autom = Automaton::from_str("literal = a|ba*;").unwrap();
+	let mut matcher = Matcher::new(&autom);
+	assert_eq!(true, matcher.match_vec(&vec!['a','a', 'a', 'a'], 0, 1000));
+	assert_eq!(4, matcher.len());
+	assert_eq!(0, matcher.result_id());
+	assert_eq!("literal", matcher.result_name());
+
+	
+	assert_eq!(true, matcher.match_vec(&vec!['b','a', 'a', 'a'], 0, 1000));
+	assert_eq!(4, matcher.len());
+	assert_eq!(0, matcher.result_id());
+	assert_eq!("literal", matcher.result_name());
+
+	
+	assert_eq!(true, matcher.match_vec(&vec!['b','a', 'b', 'a'], 0, 1000));
+	assert_eq!(2, matcher.len());
+	assert_eq!(0, matcher.result_id());
+	assert_eq!("literal", matcher.result_name());
+
+	
+	assert_eq!(false, matcher.match_vec(&vec!['c','a', 'b', 'a'], 0, 1000));
+	assert_eq!(0, matcher.len());
     }
 }
