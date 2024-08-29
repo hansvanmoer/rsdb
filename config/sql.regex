@@ -1,0 +1,43 @@
+#
+# SQL regex file used to build the SQL state lexer
+#
+
+# Whitespace
+
+$space = &32;
+
+$line_feed = &10;
+
+$tab = &9;
+
+$semicolon = &59;
+
+$keyword_delimiter = {space} | {line_feed} | {tab} | {semicolon};
+
+# Asterisk
+
+asterisk = &42;
+
+# Select + terminating whitespace
+
+select = select {keyword_delimiter};
+
+# From + terminating whitespace
+
+from = from {keyword_delimiter};
+
+# Statement delimiter
+
+statement_delimiter = {semicolon};
+
+# Identifier
+
+$identifier_char = ([a-z] | [A-Z] | _ | [0-9]);
+
+identifier = {identifier_char} {identifier_char} *;
+
+# Whitespace
+
+$whitespace_char = ({space} | {line_feed} | {tab});
+
+whitespace = {whitespace_char} {whitespace_char} * ;

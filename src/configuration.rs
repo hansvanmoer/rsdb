@@ -14,30 +14,34 @@
  *
 */
 
-mod lexer;
-mod regex;
-mod settings;
-
-use crate::lexer::{Error as LexerError, LexerFactory};
-use crate::settings::Settings;
-
-use log::info;
-use std::fs::File;
-
-fn main() {
-    env_logger::init();
-    info!("starting server...");
-
-    let settings = Settings::new().expect("could not load settings");
-    
-    info!("loading lexer...");
-    let lexers = LexerFactory::new(&settings);
-    
-    info!("server started.");
+///
+/// The configuration
+///
+pub struct Configuration {
+    config
 }
 
-#[derive(Debug, PartialEq)]
-enum Error {
-    IO,
-    Lexer(LexerError),
+///
+/// Find the configuration directory
+///
+fn find_config_dir() -> Option<PathBuf> {
+    match std::env::current_dir() {
+	Ok(mut path) => {
+	    loop {
+		path.push("config");
+		path.push("sql.regex");
+		if path.is_file() {
+		    path.pop();
+		    return Some(path);
+		}
+		path.pop();
+		path.pop();
+		if !path.pop() {
+		    break;
+		}
+	    }
+	    None
+	},
+	_ => None,
+    }
 }

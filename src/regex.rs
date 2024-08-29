@@ -178,9 +178,9 @@ impl<'a> Parser<'a> {
 	    self.skip_whitespace();
 	    let lower = self.states.len();
 	    let (start, end) = self.parse_sequence(';')?;
-	    let upper = self.states.len();
 	    let id = self.regexes.len();
-	    self.set_end(end, id as i32);
+	    let end = self.add_end(end, id as i32);
+	    let upper = self.states.len();
 	    self.regexes.push(Regex {
 		id: id as i32,
 		name: name.clone(),
@@ -288,6 +288,7 @@ impl<'a> Parser<'a> {
 		Err(Error::UnexpectedEnd)
 	    },
 	}?;
+	self.skip_whitespace();
 	match self.input.peek() {
 	    Some(&'*') => {
 		Ok(self.parse_closure(start, end))
@@ -422,6 +423,7 @@ impl<'a> Parser<'a> {
     ///
     fn parse_branch(&mut self, left_start: usize, left_end: usize) -> Result<(usize, usize), Error> {
 	self.skip();
+	self.skip_whitespace();
 	let (right_start, right_end) = self.parse_node()?;
 	let branch_start = self.add_state();
 	self.set_then(branch_start, left_start);
@@ -577,10 +579,13 @@ impl<'a> Parser<'a> {
     ///
     /// Sets the end state
     ///
-    fn set_end(&mut self, id: usize, result: i32) {
-	self.states[id].then = id;
-	self.states[id].otherwise = id;
-	self.states[id].result = result;
+    fn add_end(&mut self, id: usize, result: i32) -> usize {
+	let end = self.add_state();
+	self.set_then_otherwise(id, end);
+	self.states[end].then = end;
+	self.states[end].otherwise = end;
+	self.states[end].result = result;
+	end
     }
 
     ///
@@ -757,9 +762,15 @@ impl Automaton {
     ///
     /// Creates an automaton by parsing the supplied string
     ///
-    fn from_str(input: &str) -> Result<Automaton, Error> {
+    pub fn from_str(input: &str) -> Result<Automaton, Error> {
 	let mut parser = Parser::new(input);
-	parser.parse()
+	match parser.parse() {
+	    Ok(a) => Ok(a),
+	    Err(e) => {
+		debug!("parser error at line {}, column {}: {:?}", parser.line, parser.column, e);
+		Err(e)
+	    }
+	}
     }
 
     ///
@@ -836,6 +847,10 @@ impl Automaton {
 	}
 	result
     }
+
+    pub fn names(&self) -> &Vec<String> {
+	&self.names
+    }
 }
 
 ///
@@ -911,6 +926,7 @@ impl<'a> Matcher<'a> {
 		let mut pos = start_pos;
 		loop {
 		    let state = &self.autom.states[id];
+		    println!("state {} = {:?}", id, state);
 		    let next = if state.min != state.max {
 			// it's a range
 			if pos == input.len() {
@@ -952,6 +968,7 @@ impl<'a> Matcher<'a> {
 			    if pos > self.len {
 				self.len = pos;
 				self.result = state.result as usize;
+				println!("end: {} {}", self.len, self.result);
 			    }
 			    None
 			} else {
@@ -1061,7 +1078,7 @@ pub enum Error {
 mod tests {
 
     use super::*;
-    
+
     #[test]
     pub fn no_name() {
 	let mut parser = Parser::new(" =a");
@@ -1102,15 +1119,23 @@ mod tests {
 		State {
 		    min: 97,
 		    max: 98,
-		    then: 0,
-		    otherwise: 0,
+		    then: 1,
+		    otherwise: 1,
+		    result: -1,
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 1,
+		    otherwise: 1,
 		    result: 0,
 		},
 	    ],
 	    start: Some(0),
 	}), result);
     }
-
+    
+    
     #[test]
     pub fn empty_closure() {
 	let mut parser = Parser::new("literal = *;");
@@ -1140,15 +1165,22 @@ mod tests {
 		State {
 		    min: 0,
 		    max: 0,
-		    then: 1,
-		    otherwise: 1,
-		    result: 0
+		    then: 2,
+		    otherwise: 2,
+		    result: -1
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 2,
+		    otherwise: 2,
+		    result: 0,
 		},
 	    ],
 	    start: Some(0),
 	}), result);
     }
-
+    
     #[test]
     pub fn branch() {
 	let mut parser = Parser::new("literal=a|b;");
@@ -1183,8 +1215,15 @@ mod tests {
 		State {
 		    min: 0,
 		    max: 0,
-		    then: 3,
-		    otherwise: 3,
+		    then: 4,
+		    otherwise: 4,
+		    result: -1,
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 4,
+		    otherwise: 4,
 		    result: 0,
 		},
 	    ],
@@ -1192,6 +1231,77 @@ mod tests {
 	}), result);
     }
     
+    #[test]
+    pub fn multi_branch() {
+	let mut parser = Parser::new("literal= a | b | c ;");
+	let result = parser.parse();
+	
+	assert_eq!(Ok(Automaton {
+	    names: vec![String::from("literal")],
+	    states: vec![
+		State {
+		    min: 97,
+		    max: 98,
+		    then: 6,
+		    otherwise: 6,
+		    result: -1,
+		},
+		State {
+		    min: 98,
+		    max: 99,
+		    then: 4,
+		    otherwise: 4,
+		    result: -1,
+		},
+		State {
+		    min: 99,
+		    max: 100,
+		    then: 4,
+		    otherwise: 4,
+		    result: -1,
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 1,
+		    otherwise: 2,
+		    result: -1
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 6,
+		    otherwise: 6,
+		    result: -1
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 0,
+		    otherwise: 3,
+		    result: -1
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 7,
+		    otherwise: 7,
+		    result: -1
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 7,
+		    otherwise: 7,
+		    result: 0,
+		},
+	    ],
+	    start: Some(5),
+	}), result);
+	
+	assert_eq!((1, 21), parser.get_pos());
+    }
+
     #[test]
     pub fn empty_group() {
 	let mut parser = Parser::new("literal = ();");
@@ -1232,15 +1342,22 @@ mod tests {
 		State {
 		    min: 97,
 		    max: 98,
-		    then: 0,
-		    otherwise: 0,
+		    then: 1,
+		    otherwise: 1,
+		    result: -1,
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 1,
+		    otherwise: 1,
 		    result: 0,
 		},
 	    ],
 	    start: Some(0),
 	}), result);
     }
-    
+
     #[test]
     pub fn sequence() {
 	let mut parser = Parser::new("literal=ab;");
@@ -1261,69 +1378,19 @@ mod tests {
 		State {
 		    min: 98,
 		    max: 99,
-		    then: 1,
-		    otherwise: 1,
-		    result: 0,
-		},
-	    ],
-	    start: Some(0),
-	}), result);
-    }
-
-    #[test]
-    pub fn combined() {
-	let mut parser = Parser::new("literal=((ab)|c)*;");
-	let result = parser.parse();
-
-	assert_eq!((1, 19), parser.get_pos());
-	
-	assert_eq!(Ok(Automaton {
-	    names: vec![String::from("literal")],
-	    states: vec![
-		State {
-		    min: 97,
-		    max: 98,
-		    then: 1,
-		    otherwise: 1,
-		    result: -1,
-		},
-		State {
-		    min: 98,
-		    max: 99,
-		    then: 4,
-		    otherwise: 4,
-		    result: -1,
-		},
-		State {
-		    min: 99,
-		    max: 100,
-		    then: 4,
-		    otherwise: 4,
-		    result: -1,
-		},
-		State {
-		    min: 0,
-		    max: 0,
-		    then: 0,
+		    then: 2,
 		    otherwise: 2,
 		    result: -1,
 		},
 		State {
 		    min: 0,
 		    max: 0,
-		    then: 3,
-		    otherwise: 5,
-		    result: -1
+		    then: 2,
+		    otherwise: 2,
+		    result: 0,
 		},
-		State {
-		    min: 0,
-		    max: 0,
-		    then: 5,
-		    otherwise: 5,
-		    result: 0
-		}
 	    ],
-	    start: Some(3),
+	    start: Some(0),
 	}), result);
     }
     
@@ -1367,23 +1434,37 @@ mod tests {
 		State {
 		    min: 0,
 		    max: 0,
-		    then: 2,
-		    otherwise: 2,
-		    result: -1,
+		    then: 3,
+		    otherwise: 3,
+		    result: -1
 		},
 		State {
 		    min: 98,
 		    max: 99,
-		    then: 1,
-		    otherwise: 1,
-		    result: 0,
+		    then: 2,
+		    otherwise: 2,
+		    result: -1
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 2,
+		    otherwise: 2,
+		    result: 0
 		},
 		State {
 		    min: 97,
 		    max: 98,
+		    then: 4,
+		    otherwise: 4,
+		    result: -1
+		},
+		State {
+		    min: 0,
+		    max: 0,
 		    then: 1,
 		    otherwise: 1,
-		    result: -1,
+		    result: -1
 		}
 	    ],
 	    start: Some(0),
@@ -1457,8 +1538,15 @@ mod tests {
 		State {
 		    min: 97,
 		    max: 99,
-		    then: 0,
-		    otherwise: 0,
+		    then: 1,
+		    otherwise: 1,
+		    result: -1,
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 1,
+		    otherwise: 1,
 		    result: 0,
 		},
 	    ],
@@ -1479,8 +1567,15 @@ mod tests {
 		State {
 		    min: 97,
 		    max: 99,
-		    then: 0,
-		    otherwise: 0,
+		    then: 1,
+		    otherwise: 1,
+		    result: -1,
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 1,
+		    otherwise: 1,
 		    result: 0,
 		},
 	    ],
@@ -1501,8 +1596,15 @@ mod tests {
 		State {
 		    min: 97,
 		    max: 99,
-		    then: 0,
-		    otherwise: 0,
+		    then: 1,
+		    otherwise: 1,
+		    result: -1,
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 1,
+		    otherwise: 1,
 		    result: 0,
 		},
 	    ],
@@ -1533,8 +1635,15 @@ mod tests {
 		State {
 		    min: 97,
 		    max: 98,
-		    then: 0,
-		    otherwise: 0,
+		    then: 1,
+		    otherwise: 1,
+		    result: -1,
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 1,
+		    otherwise: 1,
 		    result: 0,
 		},
 	    ],
@@ -1552,6 +1661,70 @@ mod tests {
 	assert_eq!(Err(Error::InvalidEscape), result);
     }
 
+    #[test]
+    pub fn combined() {
+	let mut parser = Parser::new("literal=((ab)|c)*;");
+	let result = parser.parse();
+
+	assert_eq!((1, 19), parser.get_pos());
+	
+	assert_eq!(Ok(Automaton {
+	    names: vec![String::from("literal")],
+	    states: vec![
+		State {
+		    min: 97,
+		    max: 98,
+		    then: 1,
+		    otherwise: 1,
+		    result: -1,
+		},
+		State {
+		    min: 98,
+		    max: 99,
+		    then: 4,
+		    otherwise: 4,
+		    result: -1,
+		},
+		State {
+		    min: 99,
+		    max: 100,
+		    then: 4,
+		    otherwise: 4,
+		    result: -1,
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 0,
+		    otherwise: 2,
+		    result: -1,
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 3,
+		    otherwise: 5,
+		    result: -1
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 6,
+		    otherwise: 6,
+		    result: -1
+		},
+		State {
+		    min: 0,
+		    max: 0,
+		    then: 6,
+		    otherwise: 6,
+		    result: 0,
+		},
+	    ],
+	    start: Some(3),
+	}), result);
+    }
+    
     #[test]
     pub fn test_matcher() {
 	let autom = Automaton::from_str("literal = a|ba*;").unwrap();
