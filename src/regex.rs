@@ -447,12 +447,13 @@ impl<'a> Parser<'a> {
     ///
     fn parse_character(&mut self, c: char) -> Result<(), Error> {
 	match self.input.peek() {
-	    Some(c) => {
-		self.skip();
-		Ok(())
-	    },
-	    Some(_) => {
-		Err(Error::UnexpectedChar)
+	    Some(i) => {
+		if c == *i {
+		    self.skip();
+		    Ok(())
+		} else {
+		    Err(Error::UnexpectedChar)
+		}
 	    },
 	    None => {
 		Err(Error::UnexpectedEnd)

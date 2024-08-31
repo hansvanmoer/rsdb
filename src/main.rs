@@ -15,6 +15,7 @@
 */
 
 mod lexer;
+mod parser;
 mod regex;
 mod settings;
 
@@ -22,7 +23,6 @@ use crate::lexer::{Error as LexerError, LexerFactory};
 use crate::settings::Settings;
 
 use log::info;
-use std::fs::File;
 
 fn main() {
     env_logger::init();

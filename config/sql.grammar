@@ -1,0 +1,14 @@
+# SQL grammar definition
+
+select_query = select@select
+	      	whitespace *	
+		(asterisk@column whitespace) | identifier@column
+		whitespace *
+		from
+		whitespace *
+		identifier@database
+		whitespace *
+		statement_delimiter
+		whitespace *;
+
+grammar = {select_query}

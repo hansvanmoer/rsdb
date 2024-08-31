@@ -17,63 +17,7 @@
 use crate::regex::{Automaton, Error as RegexError, Matcher};
 use crate::settings::Settings;
 
-use log::debug;
 use std::fs::File;
-
-///
-/// Lexer token kind
-///
-#[derive(Clone, Debug, PartialEq)]
-pub enum TokenKind {
-    ///
-    /// The asterisk wildcard
-    ///
-    Asterisk,
-    
-    ///
-    /// The from keyword
-    ///
-    From,
-    
-    ///
-    /// An identifier
-    ///
-    Identifier,
-    
-    ///
-    /// The select keyword
-    ///
-    Select,
-
-    ///
-    /// The delimiter between two statements
-    ///
-    StatementDelimiter,
-
-    ///
-    /// Whitespace
-    ///
-    Whitespace
-}
-
-impl TokenKind {
-
-    ///
-    /// Parses the token from their name
-    ///
-    fn parse(input: &str) -> Option<TokenKind> {
-	match input {
-	    "asterisk" => Some(TokenKind::Asterisk),
-	    "from" => Some(TokenKind::From),
-	    "identifier" => Some(TokenKind::Identifier),
-	    "select" => Some(TokenKind::Select),
-	    "statement_delimiter" => Some(TokenKind::StatementDelimiter),
-	    "whitespace" => Some(TokenKind::Whitespace),
-	    _ => None,
-	}
-    }
-    
-}
 
 ///
 /// A token
@@ -83,7 +27,7 @@ pub struct Token {
     ///
     /// The token kind
     ///
-    kind: TokenKind,
+    kind: usize,
 
     ///
     /// The position of the token in the buffer
@@ -96,6 +40,29 @@ pub struct Token {
     len: usize,
 }
 
+impl Token {
+    ///
+    /// Returns the ID of the kind of the token
+    ///
+    pub fn kind(&self) -> usize {
+	self.kind
+    }
+
+    ///
+    /// Returns the position of the token in the stream
+    ///
+    pub fn pos(&self) -> usize {
+	self.pos
+    }
+
+    ///
+    /// Returns the length of the token in characters
+    ///
+    pub fn len(&self) -> usize {
+	self.len
+    }
+}
+
 
 ///
 /// The (thread safe) lexer factory
@@ -105,11 +72,6 @@ pub struct LexerFactory {
     /// The regex automaton
     ///
     automaton: Automaton,
-
-    ///
-    /// Mapping from ID to token kind
-    ///
-    kinds: Vec<TokenKind>,
 }
 
 impl LexerFactory {
@@ -120,6 +82,13 @@ impl LexerFactory {
 	let mut path = settings.create_config_path();
 	path.push("sql.regex");
 	let file = File::open(path.clone()).map_err(|_| Error::IO)?;
+	LexerFactory::from_file(&file)
+    }
+
+    ///
+    /// Constructs a new lecer factory from a file
+    ///
+    pub fn from_file(file: &File) -> Result<LexerFactory, Error> {
 	LexerFactory::from_str(&std::io::read_to_string(file).map_err(|_| Error::IO)?)
     }
     
@@ -128,35 +97,68 @@ impl LexerFactory {
     ///
     pub fn from_str(input: &str) -> Result<LexerFactory, Error> {
 	let automaton = Automaton::from_str(input)?;
-	let count = automaton.names().len();
-	debug!("token definitions found: {:?}", automaton.names());
-	if count != 6 {
-	    Err(Error::InvalidTokenCount)
-	} else {
-	    let mut kinds = vec![TokenKind::Asterisk; count];
-	    for i in 0..count {
-		let name = &automaton.names()[i];
-		kinds[i] = TokenKind::parse(name).ok_or_else(|| Error::InvalidToken(String::from(name)))?;
-	    }
-	    Ok(LexerFactory {
-		automaton,
-		kinds,
-	    })
-	}
+	Ok(LexerFactory {
+	    automaton,
+	})
     }
 
-    pub fn create_lexer<'a>(&'a self) -> Lexer<'a> {
+    ///
+    /// Returns the token names
+    ///
+    pub fn names(&self) -> &Vec<String> {
+	self.automaton.names()
+    }
+
+    ///
+    /// Creates a lexer for the given input
+    ///
+    pub fn create_lexer<'a, 'b>(&'a self, chars: &'b Characters) -> Lexer<'a, 'b> {
 	Lexer {
 	    factory: self,
 	    matcher: Matcher::new(&self.automaton),
+	    chars,
+	    pos: 0,
 	}
+    }
+}
+
+///
+/// A simple character buffer
+/// Can later be replaced by a trait to make input generic
+///
+pub struct Characters {
+    ///
+    /// The underlying buffer
+    ///
+    buffer: Vec<char>,
+}
+
+impl Characters {
+    ///
+    /// Creates a new buffer from a string slice by copying the characters in it
+    ///
+    pub fn from_str(input: &str) -> Characters {
+	Characters {
+	    buffer: String::from(input).chars().collect(),
+	}
+    }
+
+    ///
+    /// Creates a string containing the token value
+    ///
+    pub fn token_value(&self, token: &Token) -> String {
+	let mut value = String::new();
+	for i in token.pos..(token.pos + token.len) {
+	    value.push(self.buffer[i]);
+	}
+	value
     }
 }
 
 ///
 /// A lexer
 ///
-pub struct Lexer<'a> {
+pub struct Lexer<'a, 'b> {
     ///
     /// The factory that created this lexer
     ///
@@ -166,22 +168,49 @@ pub struct Lexer<'a> {
     /// The matcher
     ///
     matcher: Matcher<'a>,
+
+    ///
+    /// The character buffer
+    ///
+    chars: &'b Characters,
+
+    ///
+    /// The current position
+    ///
+    pos: usize,
 }
 
-impl<'a> Lexer<'a> {
+impl<'a, 'b> Lexer<'a, 'b> {
     ///
     /// Attempts to read a token from the character buffer at the specified position
     ///
-    pub fn next_token(&mut self, input: &Vec<char>, pos: usize) -> Option<Token> {
-	if self.matcher.match_vec(input, pos, 1000) {
+    pub fn next_token(&mut self) -> Option<Token> {
+	if self.matcher.match_vec(&self.chars.buffer, self.pos, 1000) {
+	    let pos = self.pos;
+	    let len = self.matcher.len();
+	    self.pos += len;
 	    Some(Token {
-		kind: self.factory.kinds[self.matcher.result_id()].clone(),
+		kind: self.matcher.result_id(),
 		pos: pos,
-		len: self.matcher.len(),
+		len: len,
 	    })
 	} else {
 	    None
 	}
+    }
+
+    ///
+    /// Returns the token kinds
+    ///
+    pub fn token_kinds(&self) -> &'a Vec<String> {
+	self.factory.automaton.names()
+    }
+
+    ///
+    /// Retusn the position of the current lexer
+    ///
+    pub fn pos(&self) -> usize {
+	self.pos
     }
 }
 
@@ -226,46 +255,55 @@ mod tests {
     pub fn lex_tokens() {
 	let settings = Settings::new().unwrap();
 	let lexer_factory = LexerFactory::new(&settings).unwrap();
-	let mut lexer = lexer_factory.create_lexer();
 
-	let input = String::from("select ").chars().collect();
+	let input = Characters::from_str("select ");
+	let mut lexer = lexer_factory.create_lexer(&input);
+	
 	let expected = Token {
-	    kind: TokenKind::Select,
+	    kind: 1,
 	    pos: 0,
 	    len: 7,
 	};
-	assert_eq!(Some(expected), lexer.next_token(&input, 0));
+	assert_eq!(Some(expected), lexer.next_token());
 
-	let input = String::from("*").chars().collect();
+	let input = Characters::from_str("*");
+	let mut lexer = lexer_factory.create_lexer(&input);
+	
 	let expected = Token {
-	    kind: TokenKind::Asterisk,
+	    kind: 0,
 	    pos: 0,
 	    len: 1,
 	};
-	assert_eq!(Some(expected), lexer.next_token(&input, 0));
+	assert_eq!(Some(expected), lexer.next_token());
 	
-	let input = String::from("from ").chars().collect();
+	let input = Characters::from_str("from ");
+	let mut lexer = lexer_factory.create_lexer(&input);
+	
 	let expected = Token {
-	    kind: TokenKind::From,
+	    kind: 2,
 	    pos: 0,
 	    len: 5,
 	};
-	assert_eq!(Some(expected), lexer.next_token(&input, 0));
+	assert_eq!(Some(expected), lexer.next_token());
 	
-	let input = String::from(";").chars().collect();
+	let input = Characters::from_str(";");
+	let mut lexer = lexer_factory.create_lexer(&input);
+	
 	let expected = Token {
-	    kind: TokenKind::StatementDelimiter,
+	    kind: 3,
 	    pos: 0,
 	    len: 1,
 	};
-	assert_eq!(Some(expected), lexer.next_token(&input, 0));
+	assert_eq!(Some(expected), lexer.next_token());
 
-	let input = String::from("selectid ").chars().collect();
+	let input = Characters::from_str("selectid ");
+	let mut lexer = lexer_factory.create_lexer(&input);
+	
 	let expected = Token {
-	    kind: TokenKind::Identifier,
+	    kind: 4,
 	    pos: 0,
 	    len: 8,
 	};
-	assert_eq!(Some(expected), lexer.next_token(&input, 0));
+	assert_eq!(Some(expected), lexer.next_token());
     }
 }

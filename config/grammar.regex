@@ -1,0 +1,43 @@
+# Special characters
+
+$space = &32;
+
+$line_feed = &10;
+
+$tab = &9;
+
+# A comment
+
+comment = &35 ([&1-&10] | [&11-&128])* &10;
+
+# whitespace
+
+$whitespace_char = {space} | {line_feed} | {tab};
+
+whitespace = {whitespace_char} {whitespace_char}*;
+
+# An identifier
+
+$identifier_char = [a-z] | [A-Z] | _ | -;
+
+identifier = {identifier_char} {identifier_char}*;
+
+# Operators
+
+assignment = =;
+
+closure = &42;
+
+or = &124;
+
+reference_start = &123;
+
+reference_end = &125;
+
+group_start = &40;
+
+group_end = &41;
+
+statement_end = &59;
+
+capture = &64;
